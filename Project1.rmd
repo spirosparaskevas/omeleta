@@ -1,0 +1,609 @@
+---
+title: "Project"
+author: "Spiros Paraskevas"
+date: "9 January 2015"
+output: html_document
+---
+
+##Loading libraries and the data and performing Preprocessing to define strategy.
+
+```{r, results='hide'}
+library(xgboost)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(RColorBrewer)
+library(rattle)
+library(randomForest)
+library(knitr)
+library(mice)
+library(ROCR)
+library(outliers)
+library(plyr)
+install.packages("car")
+
+training <- read.csv("training.csv", sep=";") ##Having inspected the dataset, the columns are seperated with semi colons.
+validation <- read.csv("validation.csv", sep=";")
+
+summary(training)
+summary(validation)
+lapply(training,class)
+lapply(validation,class)
+```
+
+###Data Transformations
+The datasets consists of 18 variables and one class label. The following class transformations are necesssary, as well as replacements of "," with "." so as to use those variables that are of a numeric class.
+
+```{r}
+##Regarding the training dataset
+##v1 is a categorical variable, hence no transformations needed
+table(training$v1)
+##v2's true nature is numeric and the deliminator is "," hence the following are necessary
+training$v2 <- gsub(",", ".", training$v2)
+training$v2 <- as.numeric(training$v2)
+summary(training$v2, na.rm=TRUE)
+##v3's true nature is numeric and the deliminator is "," hence the following are necessary
+training$v3 <- gsub(",", ".", training$v3)
+training$v3 <- as.numeric(training$v3)
+summary(training$v3, na.rm=TRUE)
+##v4, v5, v6, v7 are categorical variables, hence no transformation needed
+table(training$v4)
+table(training$v5)
+table(training$v6)
+table(training$v7)
+##v8
+training$v8 <- gsub(",", ".", training$v8)
+training$v8 <- as.numeric(training$v8)
+summary(training$v8, na.rm=TRUE)
+##v9 and v10 are categorical variables, hence no transformation needed
+table(training$v9)
+table(training$v10)
+##v11 is categorical with multi values (non-negative), however I will consider it numerical
+unique(training$v11)
+training$v11 <- as.numeric(training$v11)
+summary(training$v11)
+##v12 and v13 are categorical variables, hence no transformation needed
+table(training$v12)
+table(training$v13)
+##v14 and v15 are already classed as integer, hence no transformation needed
+summary(training$v14)
+summary(training$v15)
+##Just mentionning that v16 is missing, just sanity checks
+##v17 is already registered as numeric variable, hence no transformation needed
+summary(training$v17)
+class(training$v17)
+##v18 is salready registered as categorical hence no transformation needed
+table(training$v18)
+##v19 is registered as integer, but is a categorical variable hence
+table(training$v19)
+training$v19 <- as.factor(training$v19)
+## classlabel is correctly registered. However we shall rename the levels of the factors.
+training$classLabel <- revalue(training$classLabel, c("yes."="1", "no."="0"))
+
+class(training$classLabel)
+table(training$classLabel)
+```
+
+The same transformations must occur to the validation dataset as well.
+
+```{r}
+##Regarding the validation dataset
+##v1 is a categorical variable, hence no transformations needed
+table(validation$v1)
+##v2's true nature is numeric and the deliminator is "," hence the following are necessary
+validation$v2 <- gsub(",", ".", validation$v2)
+validation$v2 <- as.numeric(validation$v2)
+summary(validation$v2, na.rm=TRUE)
+##v3's true nature is numeric and the deliminator is "," hence the following are necessary
+validation$v3 <- gsub(",", ".", validation$v3)
+validation$v3 <- as.numeric(validation$v3)
+summary(validation$v3, na.rm=TRUE)
+##v4, v5, v6, v7 are categorical variables, hence no transformation needed
+table(validation$v4)
+table(validation$v5)
+table(validation$v6)
+table(validation$v7)
+##v8
+validation$v8 <- gsub(",", ".", validation$v8)
+validation$v8 <- as.numeric(validation$v8)
+summary(validation$v8, na.rm=TRUE)
+##v9 and v10 are categorical variables, hence no transformation needed
+table(validation$v9)
+table(validation$v10)
+##v11 is categorical with multi values (non-negative), however I will consider it numerical
+unique(validation$v11)
+validation$v11 <- as.numeric(validation$v11)
+summary(validation$v11)
+##v12 and v13 are categorical variables, hence no transformation needed
+table(validation$v12)
+table(validation$v13)
+##v14 and v15 are already classed as integer, hence no transformation needed
+summary(validation$v14)
+summary(validation$v15)
+##Just mentionning that v16 is missing, just sanity checks
+##v17 is already registered as numeric variable, hence no transformation needed
+summary(validation$v17)
+class(validation$v17)
+##v18 i salready registered as categorical hence no transformation needed
+table(validation$v18)
+##v19 is registered as integer, but is a categorical variable hence
+table(validation$v19)
+validation$v19 <- as.factor(validation$v19)
+## classlabel is correctly registered hence no transformation needed
+class(validation$classLabel)
+table(validation$classLabel)
+validation$classLabel <- revalue(validation$classLabel, c("yes."="1", "no."="0"))
+```
+
+##Exploratory Data Analysis (Plots and statistics) & Data Quality
+
+```{r, fig.align='center',fig.width=3, fig.height=3}
+###v1
+plot(training$v1)###Not much findings
+table(training$v1)
+sum(is.na(training$v1))/length(training$v1)##Small percentage of NAs
+
+###v2
+boxplot(training$v2)### hist(training$v2)### Positive right skewed, non-negative values
+hist(training$v2)
+summary(training$v2)## no outliers
+sum(is.na(training$v2))/length(training$v2)## Small percentage of NAs
+
+###v3
+which(training$v3==boxplot(training$v3)$out)
+hist(training$v3)### Positive rights kewed disribution, non negative values
+summary(training$v3)### no outliers
+sum(is.na(training$v3))/length(training$v3)### no NAs
+
+###v4
+plot(training$v4)### class imbalance
+table(training$v4)
+sum(is.na(training$v4))/length(training$v4)##small percentage of NAs
+
+###v5
+plot(training$v5)### class imbalance 
+table(training$v5)
+sum(is.na(training$v5))/length(training$v5)##Small percentage of NAs
+
+###v6
+plot(training$v6)### multi class
+table(training$v6)
+sum(is.na(training$v6))/length(training$v6)##Small percentage of NAs
+
+###v7
+plot(training$v7)### multi class
+table(training$v7)
+sum(is.na(training$v7))/length(training$v7)##small percentage of NAs
+
+###v8
+boxplot(training$v8)## ouliers
+hist(training$v8)### non negative values, positive right skewed
+summary(training$v8)### No NAs, no outliers
+
+###v9
+plot(training$v9)### class imbalance
+table(training$v10)
+sum(is.na(training$v9))/length(training$v9)##No NAs
+
+###v10
+plot(training$v10)###
+table(training$v10)
+sum(is.na(training$v10))/length(training$v10)##No NAs
+
+###v11
+boxplot(training$v11)### Outliers
+hist(training$v11)### Positive right skewed, non-negative values
+summary(training$v11)### Outliers, no NAs
+
+###v12
+plot(training$v12)### Positive rights skewed
+table(training$v12)
+sum(is.na(training$v12))/length(training$v12)#No NAs
+
+###v13
+plot(training$v13)### class imbalance
+table(training$v13)
+sum(is.na(training$v14))/length(training$v14)# Small percentage of NAs
+
+###v14
+boxplot(training$v14)### outliers
+hist(training$v14)### non negative values, positive right skewed, outliers 
+summary(training$v14)
+sum(is.na(training$v14))/length(training$v14)### small percentage og NAs
+
+###v15
+boxplot(training$v15)### heavy outliers, 
+hist(training$v15)### non negative values, positive extremely skewed, outliers in the right 
+summary(training$v15)
+sum(is.na(training$v15))/length(training$v15)##No NAs
+
+###v17
+boxplot(training$v17)
+hist(training$v17)### positive right skewed, non negative values
+summary(training$v17)##outliers
+sum(is.na(training$v17))/length(training$v17)### small percentage og NAs
+
+###v18
+plot(training$v18)### 
+table(training$v18)
+sum(is.na(training$v18))/length(training$v18)### Huge percentage of missing values. The variable will be discarded
+
+###v19
+plot(training$v19)### class imbalance
+table(training$v19)
+sum(is.na(training$v19))/length(training$v19)### No NAs
+
+###classLabel
+plot(training$classLabel)### class imbalance
+table(training$classLabel)
+sum(is.na(training$classLabel))/length(training$classLabel)### No NAs
+```
+
+Based on the previous, it was found that v18 in the training set had NAs reaching almost 60% of the total values, hence it will be discarded from both datasets (training and validation).
+
+
+```{r}
+training <- subset(training, select = -v18)
+validation <- subset(validation, select = -v18)
+```
+
+
+###Check for duplicate records
+
+```{r}
+##Let's check for duplicate records by counting how many are there, if any.
+sum(duplicated(training)==TRUE)##Ohh, huge number of duplicate records
+ ##Just to confirm visually the existence of duplicate records, lets sort the data set.
+train <- training[order(training$v1,training$v2,training$v3),]
+head(train)
+rm(train)
+```
+The amount of duplicate records is `r sum(duplicated(training)==TRUE)`, which is huge. The duplicate records must be removed from the training dataset.
+
+```{r}
+training_unique <- unique(training)
+rm(training)##The initial training set is no longer needed.
+```
+
+
+###Sanity checks
+There seems to be something wrong with v19 and classLabel
+```{r}
+table(training_unique$v19,training_unique$classLabel)
+```
+Based on the previous v19 and the classLabel is the same variable. This means that v19 must be removed if we wish to discover a model that can generalise.
+
+```{r}
+training_unique <- subset(training_unique, select = -v19)
+validation <- subset(validation,select= -v19)
+```
+
+Based on the summary results we see that missing values exist, however their percentage with respect to the training dataset is not much. 
+
+Some modelling aproaches demand no NAs (ie Random Forest etc). In such cases deprived of NAs datasets will be used. 
+
+```{r}
+##Hence we move on with two different datasets, one with NA values ommitted and another as is.
+training_na <- na.omit(training_unique)
+validation_na <- na.omit(validation)
+```
+
+Another strategy would be to impute missing values use the nice packages mice or caret.
+```{r}
+#library(mice)
+#training_imp <- mice(training,m=5,maxit=50,meth='pmm',seed=500)
+#completedtraining <- complete(training_imp,1)
+#library(caret)
+##The preProcess command will be used, employing the method knnImpute
+#predictorss <- subset(training, select = v1:v19)
+#preProcess(predictorss, method="knnImpute")
+# The imputation strategy was aborted due to time restriction.
+```
+
+###Data Partitioning
+
+Partion the training data so as to take all model selection decisions based on the training set only, and validate later our results on the completely left-out of the process validation set.
+
+```{r}
+inTrain <- createDataPartition(y=training_unique$classLabel, p=0.7, list=FALSE)
+myTraining <- training_unique[inTrain, ]; myTesting <- training_unique[-inTrain, ]
+
+inTrain_na <- createDataPartition(y=training_na$classLabel, p=0.7, list=FALSE)
+myTraining_na <- training_na[inTrain_na, ]; myTesting_na <- training_na[-inTrain_na, ]
+
+dim(myTraining_na); dim(myTesting_na)
+dim(myTraining); dim(myTesting)
+```
+
+##Modeling approaches
+
+```{r}
+##Set the formula
+formula <- classLabel~v1+v2+v3+v4+v5+v6+v7+v8+v9+v10+v11+v12+v13+v14+v15+v17
+```
+
+The following three models are used in the notion of train/test split notion. ROC and AUC are computed to select the best possible model in terms of performance on the test set.
+
+###Generalized linear model using the base package
+```{r}
+#glm_fit <- glm(classLabel~v1+v2+v3+v4+v5+v6+v7+v8+v9+v10+v11+v12+v13+v14+v15+v17, data=myTraining, family=binomial)
+
+```
+
+The produced warning "fitted probabilities numerically ) or 1 occured" means that there exists a variable that perfectly separates zeroes and ones in target variable.  In such a case the respective will be inflated. A suggested workaround supported by [How to deal with perfect separation in logistic regression?](http://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression) is to employ bayesian glm model as it is implented in the nice arm package. Hence:
+
+###Bayesian Generalized linear model using the arm package
+```{r}
+library(arm)
+fit <- bayesglm(classLabel~v1+v2+v3+v4+v5+v6+v7+v8+v9+v10+v11+v12+v13+v14+v15+v17, data=myTraining,family="binomial")
+display(fit)
+preds_glm <- predict(fit, newdata=myTesting, type="response")
+
+preds_glm[preds_glm>0.5] <- 1  
+preds_glm[preds_glm<=0.5] <- 0
+
+table(myTesting$classLabel,preds_glm)
+accuracy <- (66+52)/(66+9+52+13)
+accuracy
+
+###Check ROC and AUC
+
+PredictROC = predict(fit, newdata = myTesting)
+#class(PredictROC)
+pred = prediction(PredictROC, myTesting$classLabel)
+perf.bayes = performance(pred, "tpr", "fpr")
+plot(perf)
+AUC_bayesian_glm <- as.numeric(performance(pred, "auc")@y.values)
+AUC_bayesian_glm
+```
+
+###Classification and Regression Trees using the CART package
+```{r}
+rpart_fit <- rpart(formula, data=myTraining, method="class")
+##Plot the simple tree
+fancyRpartPlot(rpart_fit)
+##Let's predict on the myTesting set
+pred_rpart <- predict(rpart_fit, myTesting, type = "class")
+##Let's build the confusion matrix to evaluate results
+cmtree <- confusionMatrix(pred_rpart, myTesting$classLabel)
+cmtree
+
+##Let's evaluate our results using ROC and computing the AUC
+PredictROC = predict(rpart_fit, newdata = myTesting)
+pred = prediction(PredictROC[,2], myTesting$classLabel)
+perf = performance(pred, "tpr", "fpr")
+plot(perf)
+AUC_cart <-as.numeric(performance(pred, "auc")@y.values)
+AUC_cart
+```
+
+
+###Random Forest using the package randomForest. RF does not handle missing values hence the dataset with NAs removed will be used. Due to the involvment of the randomness element in RF results seed is set for reproducibility.
+```{r}
+set.seed(1000)
+rf_fit <- randomForest(formula, data=myTraining_na)
+preds_rf <- predict(rf_fit, myTesting_na)
+cmrf <- confusionMatrix(preds_rf, myTesting_na$classLabel)
+cmrf
+
+##Let's evaluate our results using ROC and computing the AUC
+PredictROC = predict(rf_fit, newdata = myTesting_na)
+pred = prediction(as.numeric(PredictROC), myTesting_na$classLabel)
+perf.rf = performance(pred, "tpr", "fpr")
+plot(perf.rf, colorize=TRUE)
+AUC_rf <-as.numeric(performance(pred, "auc")@y.values)
+AUC_rf
+```
+
+The best performance in terms of Accuracy on the test set, Random Forest is the best one but however predictions on the validation set emerged under the following explanatory note: 
+```{r}
+##preds_rf <- predict(rf_fit, validation_na)`
+```
+Error in predict.randomForest(rf_fit, validation_na) : Type of predictors in new data do not match that of the training data.
+
+A workaround was to rbind the two sets, where everything worked fine. Dont understand why this happens.
+```{r}
+df <- rbind(training_na,validation_na)
+rf_fit <- randomForest(formula, data=df[1:462,])
+preds_rf <- predict(rf_fit, df[463:653,])
+cmrf <- confusionMatrix(preds_rf, df[463:653,]$classLabel)
+cmrf
+```
+
+Compairing the three classifiers under the criterion of performance in the test set, it is seen that the Bayesian GLM approach delivers better results.
+
+##################################################################
+
+##2nd Classifier Bulding and selection strategy
+
+Having seen this approach we will employ a different strategy that deliveres more robust results, since it makes use of repeated k-fold cross validation strategy.
+
+```{r}
+set.seed(1000)
+##Let's define a trainControl setting, that will remain the same for all applied models thereon
+
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 5,
+                           #classProbs = TRUE,
+                           ## repeated ten times
+                           repeats = 10)
+```
+
+The criterion is a models Accuracy = (TF+TP)/(TF+FF+FP+TP) ,which we opt to maximize. Under this criterion we shall compare a number of classifiers using the excellent "caret" package.
+
+###Generalized Linear model (Binomial family)
+```{r}
+set.seed(1000)
+logisticReg <- train(formula,
+                     data = training_unique,
+                     method = "glm",
+                     #metric = "ROC",
+                     trControl = fitControl)
+logisticReg
+##Accuracy 0.8310459 Accuracy (Stand.Dev 0.09064248) 
+```
+
+
+###Bayesian Logistic Regression trees
+```{r}
+set.seed(1000)
+BayesianLogReg <- train(formula,
+                     data = training_unique,
+                     method = "bayesglm",
+                     trControl = fitControl)
+BayesianLogReg
+##Accuracy 0.8537372 (Stand.Dev 0.06386933)  
+```
+
+###Classification and regression trees CART
+```{r}
+set.seed(1000)
+##tuning for complexity parameter (cp)
+rpartTune1 <- train(training_unique[,1:16], training_unique$classLabel,
+                   method = "rpart",
+                   tuneLength = 10,
+                   trControl = fitControl)
+plot(rpartTune1)
+rpartTune1
+##Accuracy 0.8634874 (Stand.Dev. 0.05754890)
+
+##tuning for maximum node depth (maxdepth)
+rpartTune2 <- train(training_unique[,1:16], training_unique$classLabel,
+                   method = "rpart2",
+                   tuneLength = 10,
+                   trControl = fitControl)
+plot(rpartTune2)
+rpartTune2
+##Accuracy 0.8633950 (Stand.Dev. 0.05973637)
+```
+
+
+###Random Forest
+```{r}
+set.seed(1000)
+
+rfGrid = expand.grid(.mtry = c(3,4,5,6,7))
+
+randomForestFit = train(x = df[1:462,1:16], 
+                        y = df[1:462,]$classLabel, 
+                        method = "rf", 
+                        trControl = fitControl, 
+                        tuneGrid = rfGrid,
+                        ntree=30)
+plot(randomForestFit)
+randomForestFit
+##Accuracy  0.8812725 (Stand.Dev. 0.05623110)
+
+#predRoc = predict(randomForestFit, df[345:653,1:16] , type = "prob")
+#myroc = pROC::roc(test_data$case_success, as.vector(predRoc[,2]))
+#plot(myroc, print.thres = "best")
+
+##adjust optimal cut-off threshold for class probabilities
+#threshold = coords(myroc,x="best",best.method = "closest.topleft")[[1]] #get optimal cutoff threshold
+#predCut = factor( ifelse(predRoc[, "Yes"] > threshold, "Yes", "No") )
+##Confusion Matrix (Accuracy, Spec, Sens etc.)
+#curConfusionMatrix = confusionMatrix(predCut, test_data$case_success, positive = "Yes"
+```
+
+###GBM
+
+```{r}
+gbmGrid <-  expand.grid(interaction.depth = c(1, 2, 3),
+                        n.trees = (1:20)*5,
+                        shrinkage = (1:3)*0.1,
+                        n.minobsinnode = (1:3)*10)
+
+gbmFit <- train(formula, data = training_unique,
+                 method = "gbm",
+                 trControl = fitControl,
+                 ## This last option is actually one
+                 ## for gbm() that passes through
+                 verbose = FALSE,
+                 tuneGrid = gbmGrid)
+gbmFit
+trellis.par.set(caretTheme())
+plot(gbmFit)
+ggplot(gbmFit)
+```
+
+###XGBoost
+
+```{r}
+feature.names <- names(training_unique)[1:ncol(training_unique)-1]
+cat("training a XGBoost classifier\n")
+clf <- xgboost(data        = data.matrix(training_na[,feature.names]),
+               label       = training_na$classLabel,
+               nrounds     = 20,
+               objective   = "binary:logistic",
+               eval_metric = "auc")
+```
+
+###Model selection procedure.
+
+```{r}
+logisticReg     #Accuracy 0.8310459  Stand Dev 0.09064248
+BayesianLogReg  #Accuracy 0.8537372  Stand Dev 0.06386933
+rpartTune1      #Accuracy 0.8634874  Stand Dev 0.05754890
+rpartTune2      #Accuracy 0.8633277  Stand Dev 0.05699644
+randomForestFit #Accuracy 0.8679483  Stand Dev 0.05623110
+gbmFit          #Accuracy 0.8696099  Stand Dev ----------
+```
+
+Based on the accuracy results 10 times 10-fold CV, the best model is considered to be the Random Forest (which worked under a workaround) approach with parameters mtry = 6, ntree=30. However, I will reject this approach due to the workaround I used to make it work. Something is missing.
+
+The second best model is gbm approach, which will be used.
+
+##Validation process.
+
+Based on the cv results of the previous models, we choose gbm modeling approach.
+
+```{r}
+##GBM dos not provide predictions for instances that contain NAs, hence we shall again provide 191 predictions instead of 200.
+preds_gbm <- predict(gbmFit, validation_na)
+
+gbm_cm <- confusionMatrix(preds_gbm, validation_na$classLabel)
+gbm_cm
+
+##Let's evaluate our results using ROC and computing the AUC
+library(ROCR)
+
+PredictROC = predict(gbmFit, validation_na)
+PredictROC
+
+pred = prediction(as.numeric(PredictROC), validation_na$classLabel)
+perf.gbm = performance(pred, "tpr", "fpr")
+plot(perf.gbm, colorize = TRUE)
+as.numeric(performance(pred, "auc")@y.values)
+
+plot(perf.n, colorize=TRUE)
+
+lines(perf.randomForest)
+```
+ 
+For hindsight check we also perform validation using the following best model to check if our overall strategy was right.
+
+```{r}
+##CART is robust to missing values in the validation set and provides 200 predictions, which in the event of scaled such phenomena, could provide workaround solutions.
+
+preds_rpart <- predict(rpartTune1, validation)
+rpart_cm <- confusionMatrix(preds_rpart, validation$classLabel)
+rpart_cm
+
+##Let's evaluate our results using ROC and computing the AUC
+library(ROCR)
+
+PredictROC = predict(rpartTune1, validation)
+
+pred = prediction(as.numeric(PredictROC), validation$classLabel)
+perf = performance(pred, "tpr", "fpr")
+plot(perf)
+as.numeric(performance(pred, "auc")@y.values)
+```
+
+Future work could include even deeper analysis in all possible fields, variable selection, more modelling approaches namely MARS, SVM etc.
+
+Best regards
+
+Spiros Paraskevas
+

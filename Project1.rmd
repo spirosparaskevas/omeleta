@@ -8,19 +8,15 @@ output: html_document
 ##Loading libraries and the data and performing Preprocessing to define strategy.
 
 ```{r, results='hide'}
-library(xgboost)
 library(caret)
+library(xgboost)
 library(rpart)
 library(rpart.plot)
 library(RColorBrewer)
-library(rattle)
-library(randomForest)
-library(knitr)
-library(mice)
-library(ROCR)
-library(outliers)
 library(plyr)
-install.packages("car")
+library(dplyr)
+library(data.table)
+library(reshape2)
 
 training <- read.csv("training.csv", sep=";") ##Having inspected the dataset, the columns are seperated with semi colons.
 validation <- read.csv("validation.csv", sep=";")
@@ -317,101 +313,6 @@ dim(myTraining); dim(myTesting)
 
 ##Modeling approaches
 
-```{r}
-##Set the formula
-formula <- classLabel~v1+v2+v3+v4+v5+v6+v7+v8+v9+v10+v11+v12+v13+v14+v15+v17
-```
-
-The following three models are used in the notion of train/test split notion. ROC and AUC are computed to select the best possible model in terms of performance on the test set.
-
-###Generalized linear model using the base package
-```{r}
-#glm_fit <- glm(classLabel~v1+v2+v3+v4+v5+v6+v7+v8+v9+v10+v11+v12+v13+v14+v15+v17, data=myTraining, family=binomial)
-
-```
-
-The produced warning "fitted probabilities numerically ) or 1 occured" means that there exists a variable that perfectly separates zeroes and ones in target variable.  In such a case the respective will be inflated. A suggested workaround supported by [How to deal with perfect separation in logistic regression?](http://stats.stackexchange.com/questions/11109/how-to-deal-with-perfect-separation-in-logistic-regression) is to employ bayesian glm model as it is implented in the nice arm package. Hence:
-
-###Bayesian Generalized linear model using the arm package
-```{r}
-library(arm)
-fit <- bayesglm(classLabel~v1+v2+v3+v4+v5+v6+v7+v8+v9+v10+v11+v12+v13+v14+v15+v17, data=myTraining,family="binomial")
-display(fit)
-preds_glm <- predict(fit, newdata=myTesting, type="response")
-
-preds_glm[preds_glm>0.5] <- 1  
-preds_glm[preds_glm<=0.5] <- 0
-
-table(myTesting$classLabel,preds_glm)
-accuracy <- (66+52)/(66+9+52+13)
-accuracy
-
-###Check ROC and AUC
-
-PredictROC = predict(fit, newdata = myTesting)
-#class(PredictROC)
-pred = prediction(PredictROC, myTesting$classLabel)
-perf.bayes = performance(pred, "tpr", "fpr")
-plot(perf)
-AUC_bayesian_glm <- as.numeric(performance(pred, "auc")@y.values)
-AUC_bayesian_glm
-```
-
-###Classification and Regression Trees using the CART package
-```{r}
-rpart_fit <- rpart(formula, data=myTraining, method="class")
-##Plot the simple tree
-fancyRpartPlot(rpart_fit)
-##Let's predict on the myTesting set
-pred_rpart <- predict(rpart_fit, myTesting, type = "class")
-##Let's build the confusion matrix to evaluate results
-cmtree <- confusionMatrix(pred_rpart, myTesting$classLabel)
-cmtree
-
-##Let's evaluate our results using ROC and computing the AUC
-PredictROC = predict(rpart_fit, newdata = myTesting)
-pred = prediction(PredictROC[,2], myTesting$classLabel)
-perf = performance(pred, "tpr", "fpr")
-plot(perf)
-AUC_cart <-as.numeric(performance(pred, "auc")@y.values)
-AUC_cart
-```
-
-
-###Random Forest using the package randomForest. RF does not handle missing values hence the dataset with NAs removed will be used. Due to the involvment of the randomness element in RF results seed is set for reproducibility.
-```{r}
-set.seed(1000)
-rf_fit <- randomForest(formula, data=myTraining_na)
-preds_rf <- predict(rf_fit, myTesting_na)
-cmrf <- confusionMatrix(preds_rf, myTesting_na$classLabel)
-cmrf
-
-##Let's evaluate our results using ROC and computing the AUC
-PredictROC = predict(rf_fit, newdata = myTesting_na)
-pred = prediction(as.numeric(PredictROC), myTesting_na$classLabel)
-perf.rf = performance(pred, "tpr", "fpr")
-plot(perf.rf, colorize=TRUE)
-AUC_rf <-as.numeric(performance(pred, "auc")@y.values)
-AUC_rf
-```
-
-The best performance in terms of Accuracy on the test set, Random Forest is the best one but however predictions on the validation set emerged under the following explanatory note: 
-```{r}
-##preds_rf <- predict(rf_fit, validation_na)`
-```
-Error in predict.randomForest(rf_fit, validation_na) : Type of predictors in new data do not match that of the training data.
-
-A workaround was to rbind the two sets, where everything worked fine. Dont understand why this happens.
-```{r}
-df <- rbind(training_na,validation_na)
-rf_fit <- randomForest(formula, data=df[1:462,])
-preds_rf <- predict(rf_fit, df[463:653,])
-cmrf <- confusionMatrix(preds_rf, df[463:653,]$classLabel)
-cmrf
-```
-
-Compairing the three classifiers under the criterion of performance in the test set, it is seen that the Bayesian GLM approach delivers better results.
-
 ##################################################################
 
 ##2nd Classifier Bulding and selection strategy
@@ -424,13 +325,13 @@ set.seed(1000)
 
 fitControl <- trainControl(## 10-fold CV
                            method = "repeatedcv",
-                           number = 5,
+                           number = 10,
                            #classProbs = TRUE,
                            ## repeated ten times
                            repeats = 10)
 ```
 
-The criterion is a models Accuracy = (TF+TP)/(TF+FF+FP+TP) ,which we opt to maximize. Under this criterion we shall compare a number of classifiers using the excellent "caret" package.
+The criterion is a models Accuracy = (TN+TP)/(TN+FN+FP+TP), which we opt to maximize. Under this criterion we shall compare a number of classifiers using the excellent "caret" package.
 
 ###Generalized Linear model (Binomial family)
 ```{r}
@@ -521,10 +422,40 @@ gbmFit <- train(formula, data = training_unique,
                  ## for gbm() that passes through
                  verbose = FALSE,
                  tuneGrid = gbmGrid)
+
+
+
 gbmFit
 trellis.par.set(caretTheme())
 plot(gbmFit)
 ggplot(gbmFit)
+
+
+##Comapre models
+
+resamp <- resamples(list("LM"=LM, "NLM"=NLM, "Splines"=Splines,"GLM"=GLMd))
+
+##Visual check
+bwplot(resamp)
+
+##RMSE under LOOCV check
+method_d <- summary(resamp)
+
+##Statistical checks on the residuals. If true mean of difference is around zero, then the models perform equally. If true mean of residuals is negative, then the first model in the function performs better. Respectively, if the true mean of the residuals is negative then the second mentionned model performs better in a statistically significant way.
+
+compare_models(LM, NLM)
+##Since p-value is greater than 0.05 then neither LM or NLM outperform one another in a statistically significant way. 
+compare_models(LM,Splines)
+##Since p-value is lower than 0.05 and the computed mean of residual differences a positive number, then Splines outperforms LM in a statistically significant way. 
+compare_models(LM,GLMd)
+##Since p-value is lower than 0.05 and the computed mean of residual differences a positive number, then GLM outperforms LM in a statistically significant way.
+compare_models(NLM,Splines)
+##Since p-value is lower than 0.05 and the computed mean of residual differences a positive number, then Splines outperforms NLM in a statistically significant way.
+compare_models(NLM,GLMd)
+##Since p-value is lower than 0.05 and the computed mean of residual differences a positive number, then GLM outperforms NLM in a statistically significant way.
+compare_models(Splines,GLMd)
+##Since p-value is almost 0.05 and the computed mean of residual differences a positive number, then GLM outperforms NLM in a statistically significant way.
+```
 ```
 
 ###XGBoost
